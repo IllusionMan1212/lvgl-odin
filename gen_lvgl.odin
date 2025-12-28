@@ -9,150 +9,175 @@ import "core:strings"
 
 LVGL_VERSION :: "9.5"
 
+// TODO: Improvements
 /*
-            "name": "lv_result_t",
-            "type": {
-                "name": "int",
-                "json_type": "primitive_type"
-            },
-            "json_type": "enum",
-            "docstring": "",
-            "members": [
-                {
-                    "name": "LV_RESULT_INVALID",
-                    "type": {
-                        "name": "lv_result_t",
-                        "json_type": "lvgl_type"
-                    },
-                    "json_type": "enum_member",
-                    "docstring": "",
-                    "value": "0x0"
-                },
-                {
-                    "name": "LV_RESULT_OK",
-                    "type": {
-                        "name": "lv_result_t",
-                        "json_type": "lvgl_type"
-                    },
-                    "json_type": "enum_member",
-                    "docstring": "",
-                    "value": "0x1"
-                }
-            ],
-            "quals": []
+	Needed to just have the thing compile
+	- ^void -> rawptr
+	- -> void -> nothing
+	- void arguments -> nothing
+
+	Nice to haves
+	- ^u8 -> cstring
+	- ^^ -> [^]^ ?? not super sure about this tbh. maybe manually on a case by case basis
 */
 
-EnumMember :: struct {
-	name: string `json:"name"`,
-	/* type */
-	/* json_type */
-	docstring: string `json:"docstring"`,
-	value: string `json:"value"`,
+get_primitive_type :: proc(type_name: string) -> string {
+	switch type_name {
+	case "char":
+		return "u8"
+	case "bool":
+		return "bool"
+	case "int":
+		return "i32"
+	case "float":
+		return "f32"
+	case "void":
+		return "void"
+	case:
+		fmt.panicf("unknown primitive type: %v", type_name)
+	}
 }
 
-Qual :: distinct string
+resolve_type :: proc(type: json.Object, nest_level: int) -> string {
+	tabs := strings.repeat("\t", nest_level)
 
-Enum :: struct {
-	name: string `json:"name"`,
-	/* type */
-	/* json_type */
-	docstring: string `json:"docstring"`,
-	members: []EnumMember `json:"members"`,
-	quals: []Qual `json:"quals"`
-}
-
-Function :: struct {
-}
-
-Argument :: struct {
-	name: Maybe(string) `json:"name"`,
-	// type: Type,
-	/* json_type. always arg */
-	docstring: string `json:"docstring"`,
-	quals: []Qual `json:"quals"`,
-}
-
-FunctionPointer :: struct {
-	name: string `json:"name"`,
-	/* type */
-	/* json_type. always function_pointer */
-	docstring: string `json:"docstring"`,
-	args: []Argument `json:"args"`,
-}
-
-Structure :: struct {
-	name: string `json:"name"`,
-	/* type. usually just primitive_type of struct which we already know */
-	/* json_type */
-	docstring: string `json:"docstring"`,
-	fields: []Field `json:"fields"`,
-	quals: []Qual `json:"quals"`,
-}
-
-Field :: struct {
-	name: string `json:"name"`,
-	type: struct {
-		name: string `json:"name"`,
-		json_type: string `json:"json_type"`,
-		docstring: string `json:"docstring"`,
-		type: struct {
-			name: string `json:"name"`,
-			json_type: string `json:"json_type"`,
-			type: struct { // There's no way we're gonna have more than 2 pointers right?
-				name: string `json:"name"`,
-				json_type: string `json:"json_type"`,
-			},
-		} `json:"type"`,
-		fields: []Field `json:"fields"`,
-	},
-	/* json_type */
-	docstring: string `json:"docstring"`,
-}
-
-Union :: struct {
-	name: string `json:"name"`,
-	/* type */
-	/* json_type */
-	docstring: string `json:"docstring"`,
-	fields: []Field `json:"fields"`,
-	quals: []Qual `json:"quals"`,
-}
-
-Variable :: struct {
-
-}
-
-Typedef :: struct {
-
-}
-
-ForwardDecl :: struct {
-}
-
-Macro :: struct {
-}
-
-API :: struct {
-	enums: []Enum `json:"enums"`,
-	functions: []Function `json:"functions"`,
-	function_pointers: []FunctionPointer `json:"function_pointers"`,
-	structures: []Structure `json:"structures"`,
-	unions: []Union `json:"unions"`,
-	variables: []Variable `json:"variables"`,
-	typedefs: []Typedef `json:"typedefs"`,
-	forward_decls: []ForwardDecl `json:"forward_decls"`,
-	macros: []Macro `json:"macros"`,
-}
-
-resolve_type :: proc(type: json.Object) -> string {
 	sb := strings.builder_make_len_cap(0, 8)
 
-	name := type["name"].(json.String)
 	json_type := type["json_type"].(json.String)
 
 	switch json_type {
 	case "primitive_type":
+		name := type["name"].(json.String)
 		strings.write_string(&sb, get_primitive_type(name))
+	case "stdlib_type":
+		name := type["name"].(json.String)
+		switch name {
+		case "int8_t":
+			strings.write_string(&sb, "i8")
+		case "uint8_t":
+			strings.write_string(&sb, "u8")
+		case "int16_t":
+			strings.write_string(&sb, "i16")
+		case "uint16_t":
+			strings.write_string(&sb, "u16")
+		case "int32_t":
+			strings.write_string(&sb, "i32")
+		case "uint32_t":
+			strings.write_string(&sb, "u32")
+		case "size_t":
+			strings.write_string(&sb, "uint")
+		case:
+			fmt.panicf("unknown stdlib type: %v", name)
+		}
+	case "lvgl_type":
+		name := type["name"].(json.String)
+		strings.write_string(&sb, name)
+	case "struct":
+		nested_type := type["type"].(json.Object)
+		tabs = strings.repeat("\t", nest_level + 1)
+
+		strings.write_string(&sb, fmt.tprintf("struct {{\n"))
+
+		fields := type["fields"].(json.Array)
+
+		for field in fields {
+			f_tabs := strings.repeat("\t", nest_level + 2)
+			f := field.(json.Object)
+			f_name := f["name"].(json.String)
+			f_type := f["type"].(json.Object)
+
+			strings.write_string(&sb, fmt.tprintf("%s%s: %s,\n", f_tabs, f_name, resolve_type(f_type, nest_level + 2)))
+		}
+
+		strings.write_string(&sb, fmt.tprintf("%s}", tabs))
+	case "pointer":
+		nested_type := type["type"].(json.Object)
+
+		strings.write_string(&sb, fmt.tprintf("^%s", resolve_type(nested_type, nest_level + 1)))
+	case "union":
+		nested_type := type["type"].(json.Object)
+
+		strings.write_string(&sb, fmt.tprintf("struct #raw_union {{\n"))
+
+		fields := type["fields"].(json.Array)
+
+		for field in fields {
+			f_tabs := strings.repeat("\t", nest_level + 1)
+			f := field.(json.Object)
+			f_name := f["name"].(json.String)
+			f_type := f["type"].(json.Object)
+
+			strings.write_string(&sb, fmt.tprintf("%s%s: %s,\n", f_tabs, f_name, resolve_type(f_type, nest_level + 1)))
+		}
+
+		strings.write_string(&sb, fmt.tprintf("%s}", tabs))
+	case "function_pointer":
+		strings.write_string(&sb, fmt.tprintf("#type proc \"c\" ("))
+
+		fp_type := type["type"].(json.Object)
+		args := type["args"].(json.Array)
+
+		i := 0
+		for arg in args {
+			if i != 0 {
+				strings.write_string(&sb, ", ")
+			}
+
+			a := arg.(json.Object)
+			a_name := a["name"]
+
+			arg_name := ""
+			#partial switch v in a_name {
+			case json.Null:
+				arg_name = fmt.tprintf("arg%v", i)
+			case json.String:
+				arg_name = v
+			}
+
+			a_docstring := a["docstring"].(json.String)
+			a_type := a["type"].(json.Object)
+
+			if a_docstring != "" {
+				strings.write_string(&sb, fmt.tprintf("/* %s */", a_docstring))
+			}
+
+			strings.write_string(&sb, fmt.tprintf("%s: %s", arg_name, resolve_type(a_type, nest_level + 1)))
+
+			i += 1
+		}
+
+		strings.write_string(&sb, ")")
+		strings.write_string(&sb, fmt.tprintf("%s", resolve_type(fp_type, nest_level + 1)))
+	case "ret_type":
+		nested_type := type["type"].(json.Object)
+		ret_type := resolve_type(nested_type, nest_level + 1)
+
+		if ret_type != "" {
+			strings.write_string(&sb, fmt.tprintf(" -> %s", ret_type))
+		}
+	case "array":
+		name := type["name"]
+		dim := ""
+		if d, ok := type["dim"].(json.String); ok {
+			dim = d
+		}
+
+		#partial switch n in name {
+		case nil:
+			nested_type := type["type"].(json.Object)
+
+			strings.write_string(&sb, fmt.tprintf("[%s]%s", dim, resolve_type(nested_type, nest_level + 1)))
+		case json.String:
+			strings.write_string(&sb, fmt.tprintf("[%s]%s", dim, name))
+		case:
+			fmt.panicf("unhandled array name type: %s", n)
+		}
+	case "forward_decl":
+		// TODO: CONTINUE FROM HERE
+		// forward decls are always (opaque) structs.
+		// ofc I gotta differentiate between root-level decls and proc arg/field decls right?
+		// the field/arg ones are always pointers ???
+		fmt.panicf("unhandled json_type: %v", json_type)
 	case:
 		fmt.panicf("unhandled json_type: %v", json_type)
 	}
@@ -185,7 +210,7 @@ generate_enums :: proc(value: json.Array, file: ^os.File) {
 		// 	fmt.panicf("Got enum with non-primitive type: %v", type)
 		// }
 
-		os.write_string(file, fmt.tprintf("%s :: enum %s {{\n", e_name, resolve_type(e_type)))
+		os.write_string(file, fmt.tprintf("%s :: enum %s {{\n", e_name, resolve_type(e_type, 0)))
 
 		for member in e_members {
 			m := member.(json.Object)
@@ -201,15 +226,6 @@ generate_enums :: proc(value: json.Array, file: ^os.File) {
 		}
 
 		os.write_string(file, "}\n\n")
-	}
-}
-
-get_primitive_type :: proc(type_name: string) -> string {
-	switch type_name {
-	case "int":
-		return "i32"
-	case:
-		fmt.panicf("unknown primitive type: %v", type_name)
 	}
 }
 
@@ -236,72 +252,72 @@ get_stdlib_type :: proc(type: string) -> string {
 	}
 }
 
-generate_field :: proc(file: ^os.File, field: Field, nest_level: int) {
-	tabs := strings.repeat("\t", nest_level)
-	if field.docstring != "" {
-		os.write_string(file, fmt.tprintf("%s/* %s */\n", tabs, field.docstring))
-	}
+// generate_field :: proc(file: ^os.File, field: Field, nest_level: int) {
+// 	tabs := strings.repeat("\t", nest_level)
+// 	if field.docstring != "" {
+// 		os.write_string(file, fmt.tprintf("%s/* %s */\n", tabs, field.docstring))
+// 	}
 
-	switch field.type.json_type {
-	case "struct":
-		os.write_string(file, fmt.tprintf("%s%s: struct {{\n", tabs, field.name))
-		for subfield in field.type.fields {
-			generate_field(file, subfield, nest_level + 1)
-		}
-		os.write_string(file, fmt.tprintf("%s},\n", tabs))
-	case "pointer":
-		switch field.type.type.json_type {
-		case "primitive_type":
-			switch field.type.type.name {
-			case "void":
-				os.write_string(file, fmt.tprintf("%s%s: rawptr,\n", tabs, field.name))
-			case "char":
-				os.write_string(file, fmt.tprintf("%s%s: cstring,\n", tabs, field.name))
-			case:
-				fmt.panicf("unimplemented primitive pointer: %v", field)
-			}
-		case "stdlib_type":
-			os.write_string(file, fmt.tprintf("%s%s: ^%s,\n", tabs, field.name, get_stdlib_type(field.type.type.name)))
-		case "lvgl_type":
-			os.write_string(file, fmt.tprintf("%s%s: ^%s,\n", tabs, field.name, field.type.type.name))
-		case "pointer":
-			switch field.type.type.type.json_type {
-			case "primitive_type":
-				switch field.type.type.type.name {
-				case "void":
-					os.write_string(file, fmt.tprintf("%s%s: ^rawptr,\n", tabs, field.name))
-				case:
-					fmt.panicf("unimplemented primitive pointer: %v", field)
-				}
-			case "stdlib_type":
-				os.write_string(file, fmt.tprintf("%s%s: ^^%s,\n", tabs, field.name, get_stdlib_type(field.type.type.type.name)))
-			case "lvgl_type":
-				os.write_string(file, fmt.tprintf("%s%s: ^^%s,\n", tabs, field.name, field.type.type.type.name))
-			case:
-				fmt.panicf("unimplemented pointer: %v", field)
-			}
-		case:
-			fmt.panicf("unimplemented pointer: %v", field)
-		}
-	case "stdlib_type":
-		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, field.name, get_stdlib_type(field.type.name)))
-	case "primitive_type":
-		switch field.type.name {
-		case "float":
-			os.write_string(file, fmt.tprintf("%s%s: f32,\n", tabs, field.name))
-		case "bool":
-			os.write_string(file, fmt.tprintf("%s%s: bool,\n", tabs, field.name))
-		case "char":
-			os.write_string(file, fmt.tprintf("%s%s: u8,\n", tabs, field.name))
-		case:
-			fmt.panicf("unimplemented primitive type: %v", field)
-		}
-	case:
-		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, field.name, field.type.name))
-	}
-}
+// 	switch field.type.json_type {
+// 	case "struct":
+// 		os.write_string(file, fmt.tprintf("%s%s: struct {{\n", tabs, field.name))
+// 		for subfield in field.type.fields {
+// 			generate_field(file, subfield, nest_level + 1)
+// 		}
+// 		os.write_string(file, fmt.tprintf("%s},\n", tabs))
+// 	case "pointer":
+// 		switch field.type.type.json_type {
+// 		case "primitive_type":
+// 			switch field.type.type.name {
+// 			case "void":
+// 				os.write_string(file, fmt.tprintf("%s%s: rawptr,\n", tabs, field.name))
+// 			case "char":
+// 				os.write_string(file, fmt.tprintf("%s%s: cstring,\n", tabs, field.name))
+// 			case:
+// 				fmt.panicf("unimplemented primitive pointer: %v", field)
+// 			}
+// 		case "stdlib_type":
+// 			os.write_string(file, fmt.tprintf("%s%s: ^%s,\n", tabs, field.name, get_stdlib_type(field.type.type.name)))
+// 		case "lvgl_type":
+// 			os.write_string(file, fmt.tprintf("%s%s: ^%s,\n", tabs, field.name, field.type.type.name))
+// 		case "pointer":
+// 			switch field.type.type.type.json_type {
+// 			case "primitive_type":
+// 				switch field.type.type.type.name {
+// 				case "void":
+// 					os.write_string(file, fmt.tprintf("%s%s: ^rawptr,\n", tabs, field.name))
+// 				case:
+// 					fmt.panicf("unimplemented primitive pointer: %v", field)
+// 				}
+// 			case "stdlib_type":
+// 				os.write_string(file, fmt.tprintf("%s%s: ^^%s,\n", tabs, field.name, get_stdlib_type(field.type.type.type.name)))
+// 			case "lvgl_type":
+// 				os.write_string(file, fmt.tprintf("%s%s: ^^%s,\n", tabs, field.name, field.type.type.type.name))
+// 			case:
+// 				fmt.panicf("unimplemented pointer: %v", field)
+// 			}
+// 		case:
+// 			fmt.panicf("unimplemented pointer: %v", field)
+// 		}
+// 	case "stdlib_type":
+// 		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, field.name, get_stdlib_type(field.type.name)))
+// 	case "primitive_type":
+// 		switch field.type.name {
+// 		case "float":
+// 			os.write_string(file, fmt.tprintf("%s%s: f32,\n", tabs, field.name))
+// 		case "bool":
+// 			os.write_string(file, fmt.tprintf("%s%s: bool,\n", tabs, field.name))
+// 		case "char":
+// 			os.write_string(file, fmt.tprintf("%s%s: u8,\n", tabs, field.name))
+// 		case:
+// 			fmt.panicf("unimplemented primitive type: %v", field)
+// 		}
+// 	case:
+// 		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, field.name, field.type.name))
+// 	}
+// }
 
-generate_structs :: proc(api: API, file: ^os.File) {
+generate_structs :: proc(value: json.Array, file: ^os.File) {
 	os.write_string(file, `
 /*
 	-----------------
@@ -311,18 +327,51 @@ generate_structs :: proc(api: API, file: ^os.File) {
 
 `)
 
-	for s in api.structures {
-		if s.docstring != "" {
-			os.write_string(file, fmt.tprintf("/* %s */\n", s.docstring))
+	for s in value {
+		s := s.(json.Object)
+		s_name := s["name"].(json.String)
+		s_docstring := s["docstring"].(json.String)
+		s_type := s["type"].(json.Object)
+		s_fields := s["fields"].(json.Array)
+
+		if s_docstring != "" {
+			os.write_string(file, fmt.tprintf("/* %s */\n", s_docstring))
 		}
 
-		os.write_string(file, fmt.tprintf("%s :: struct {{\n", s.name))
+		os.write_string(file, fmt.tprintf("%s :: struct {{\n", s_name))
 
-		for field in s.fields {
-			generate_field(file, field, 1)
+		for field in s_fields {
+			f := field.(json.Object)
+			f_name := f["name"].(json.String)
+			f_docstring := f["docstring"].(json.String)
+			f_type := f["type"].(json.Object)
+
+			if f_docstring != "" {
+				os.write_string(file, fmt.tprintf("\t/* %s */\n", f_docstring))
+			}
+
+			os.write_string(file, fmt.tprintf("\t%s: %s,\n", f_name, resolve_type(f_type, 1)))
 		}
 
 		os.write_string(file, "}\n\n")
+	}
+}
+
+generate_field :: proc(file: ^os.File, field: json.Value, nest_level: int) {
+	tabs := strings.repeat("\t", nest_level)
+
+	f := field.(json.Object)
+	f_name := f["name"].(json.String)
+	f_docsring := f["docstring"].(json.String)
+	f_bitsize := f["bitsize"]
+	f_type := f["type"].(json.Object)
+
+	#partial switch b in f_bitsize {
+	case json.Null:
+		// TODO:
+		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, f_name, resolve_type(f_type, 0)))
+	case json.String:
+		fmt.panicf("Unhandled bitfield")
 	}
 }
 
@@ -349,32 +398,14 @@ generate_unions :: proc(value: json.Array, file: ^os.File) {
 		os.write_string(file, fmt.tprintf("%s :: struct #raw_union {{\n", u_name))
 
 		for field in u_fields {
-			f := field.(json.Object)
-			f_name := f["name"].(json.String)
-			f_docsring := f["docstring"].(json.String)
-
-			// TODO: CONTINUE FROM HERE
+			generate_field(file, field, 1)
 		}
 
 		os.write_string(file, "}\n\n")
 	}
-
-	// for u in api.unions {
-	// 	if u.docstring != "" {
-	// 		os.write_string(file, fmt.tprintf("/* %s */\n", u.docstring))
-	// 	}
-
-	// 	os.write_string(file, fmt.tprintf("%s :: struct #raw_union {{\n", u.name))
-
-	// 	for field in u.fields {
-	// 		generate_field(file, field, 1)
-	// 	}
-
-	// 	os.write_string(file, "}\n\n")
-	// }
 }
 
-generate_proc_pointers :: proc(api: API, file: ^os.File) {
+generate_proc_pointers :: proc(value: json.Array, file: ^os.File) {
 	os.write_string(file, `
 /*
 	---------------------
@@ -384,7 +415,16 @@ generate_proc_pointers :: proc(api: API, file: ^os.File) {
 
 `)
 
-	for fp in api.function_pointers {
+	for fp in value {
+		fp := fp.(json.Object)
+		fp_name := fp["name"].(json.String)
+		fp_docstring := fp["docstring"].(json.String)
+
+		if fp_docstring != "" {
+			os.write_string(file, fmt.tprintf("/* %s */\n", fp_docstring))
+		}
+
+		os.write_string(file, fmt.tprintf("%s :: %s\n", fp_name, resolve_type(fp, 0)))
 	}
 }
 
@@ -430,19 +470,15 @@ foreign import lvgl {
 }
 `)
 
-	// fmt.println(api)
-
 	value, parse_err := json.parse(data)
 	if parse_err != nil {
 		fmt.panicf("Failed to parse json: %v", parse_err)
 	}
 	defer json.destroy_value(value)
 
-	// fmt.println(value)
-
 	generate_enums(value.(json.Object)["enums"].(json.Array), file)
-	// generate_structs(api, file)
+	generate_proc_pointers(value.(json.Object)["function_pointers"].(json.Array), file)
+	generate_structs(value.(json.Object)["structures"].(json.Array), file)
 	generate_unions(value.(json.Object)["unions"].(json.Array), file)
-	// generate_proc_pointers(api, file)
 	// generate_procs(api, file)
 }
