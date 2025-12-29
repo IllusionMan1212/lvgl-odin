@@ -15,10 +15,17 @@ LVGL_VERSION :: "9.5"
 	- ^void -> rawptr
 	- -> void -> nothing
 	- void arguments -> nothing
+	- any argument named `context` needs to be `_context` or `ctx`
 
 	Nice to haves
 	- ^u8 -> cstring
 	- ^^ -> [^]^ ?? not super sure about this tbh. maybe manually on a case by case basis
+*/
+
+/*
+	TODO: Are these needed? Can we do without them.
+	- Macros ??
+	- Variables ??
 */
 
 get_primitive_type :: proc(type_name: string) -> string {
@@ -33,6 +40,8 @@ get_primitive_type :: proc(type_name: string) -> string {
 		return "f32"
 	case "void":
 		return "void"
+	case "struct":
+		return ""
 	case:
 		fmt.panicf("unknown primitive type: %v", type_name)
 	}
@@ -64,6 +73,10 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 			strings.write_string(&sb, "i32")
 		case "uint32_t":
 			strings.write_string(&sb, "u32")
+		case "intptr_t":
+			strings.write_string(&sb, "int")
+		case "uintptr_t":
+			strings.write_string(&sb, "uintptr")
 		case "size_t":
 			strings.write_string(&sb, "uint")
 		case:
@@ -173,11 +186,15 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 			fmt.panicf("unhandled array name type: %s", n)
 		}
 	case "forward_decl":
-		// TODO: CONTINUE FROM HERE
-		// forward decls are always (opaque) structs.
-		// ofc I gotta differentiate between root-level decls and proc arg/field decls right?
-		// the field/arg ones are always pointers ???
-		fmt.panicf("unhandled json_type: %v", json_type)
+		name := type["name"].(json.String)
+		type := type["type"].(json.Object)
+
+		strings.write_string(&sb, fmt.tprintf("%s %s", name, resolve_type(type, nest_level + 1)))
+	case "typedef":
+		name := type["name"].(json.String)
+		type := type["type"].(json.Object)
+
+		strings.write_string(&sb, fmt.tprintf("%s", resolve_type(type, nest_level + 1)))
 	case:
 		fmt.panicf("unhandled json_type: %v", json_type)
 	}
@@ -243,6 +260,8 @@ get_stdlib_type :: proc(type: string) -> string {
 		return "i32"
 	case "uint32_t":
 		return "u32"
+	case "uintptr_t":
+		return "uintptr"
 	case "size_t":
 		return "uint"
 	case "ssize_t":
@@ -251,71 +270,6 @@ get_stdlib_type :: proc(type: string) -> string {
 		fmt.panicf("unknown stdlib type: %v", type)
 	}
 }
-
-// generate_field :: proc(file: ^os.File, field: Field, nest_level: int) {
-// 	tabs := strings.repeat("\t", nest_level)
-// 	if field.docstring != "" {
-// 		os.write_string(file, fmt.tprintf("%s/* %s */\n", tabs, field.docstring))
-// 	}
-
-// 	switch field.type.json_type {
-// 	case "struct":
-// 		os.write_string(file, fmt.tprintf("%s%s: struct {{\n", tabs, field.name))
-// 		for subfield in field.type.fields {
-// 			generate_field(file, subfield, nest_level + 1)
-// 		}
-// 		os.write_string(file, fmt.tprintf("%s},\n", tabs))
-// 	case "pointer":
-// 		switch field.type.type.json_type {
-// 		case "primitive_type":
-// 			switch field.type.type.name {
-// 			case "void":
-// 				os.write_string(file, fmt.tprintf("%s%s: rawptr,\n", tabs, field.name))
-// 			case "char":
-// 				os.write_string(file, fmt.tprintf("%s%s: cstring,\n", tabs, field.name))
-// 			case:
-// 				fmt.panicf("unimplemented primitive pointer: %v", field)
-// 			}
-// 		case "stdlib_type":
-// 			os.write_string(file, fmt.tprintf("%s%s: ^%s,\n", tabs, field.name, get_stdlib_type(field.type.type.name)))
-// 		case "lvgl_type":
-// 			os.write_string(file, fmt.tprintf("%s%s: ^%s,\n", tabs, field.name, field.type.type.name))
-// 		case "pointer":
-// 			switch field.type.type.type.json_type {
-// 			case "primitive_type":
-// 				switch field.type.type.type.name {
-// 				case "void":
-// 					os.write_string(file, fmt.tprintf("%s%s: ^rawptr,\n", tabs, field.name))
-// 				case:
-// 					fmt.panicf("unimplemented primitive pointer: %v", field)
-// 				}
-// 			case "stdlib_type":
-// 				os.write_string(file, fmt.tprintf("%s%s: ^^%s,\n", tabs, field.name, get_stdlib_type(field.type.type.type.name)))
-// 			case "lvgl_type":
-// 				os.write_string(file, fmt.tprintf("%s%s: ^^%s,\n", tabs, field.name, field.type.type.type.name))
-// 			case:
-// 				fmt.panicf("unimplemented pointer: %v", field)
-// 			}
-// 		case:
-// 			fmt.panicf("unimplemented pointer: %v", field)
-// 		}
-// 	case "stdlib_type":
-// 		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, field.name, get_stdlib_type(field.type.name)))
-// 	case "primitive_type":
-// 		switch field.type.name {
-// 		case "float":
-// 			os.write_string(file, fmt.tprintf("%s%s: f32,\n", tabs, field.name))
-// 		case "bool":
-// 			os.write_string(file, fmt.tprintf("%s%s: bool,\n", tabs, field.name))
-// 		case "char":
-// 			os.write_string(file, fmt.tprintf("%s%s: u8,\n", tabs, field.name))
-// 		case:
-// 			fmt.panicf("unimplemented primitive type: %v", field)
-// 		}
-// 	case:
-// 		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, field.name, field.type.name))
-// 	}
-// }
 
 generate_structs :: proc(value: json.Array, file: ^os.File) {
 	os.write_string(file, `
@@ -428,6 +382,80 @@ generate_proc_pointers :: proc(value: json.Array, file: ^os.File) {
 	}
 }
 
+generate_typedefs :: proc(value: json.Array, file: ^os.File) {
+	os.write_string(file,`
+/*
+	-------------------
+	 TYPEDEFS
+	-------------------
+*/
+
+`)
+
+	for t in value {
+		t := t.(json.Object)
+		t_name := t["name"].(json.String)
+		t_docstring := t["docstring"].(json.String)
+
+		if t_docstring != "" {
+			os.write_string(file, fmt.tprintf("/* %s */\n", t_docstring))
+		}
+
+		os.write_string(file, fmt.tprintf("%s :: distinct %s\n", t_name, resolve_type(t, 0)))
+	}
+}
+
+generate_forward_decls :: proc(value: json.Array, file: ^os.File) {
+	os.write_string(file, `
+/*
+	---------------------
+	 FORWARD DECLERATIONS
+	---------------------
+*/
+
+`)
+
+	for fd in value {
+		fd := fd.(json.Object)
+		fd_name := fd["name"].(json.String)
+		fd_type := fd["type"].(json.Object)
+		fd_docstring := fd["docstring"].(json.String)
+
+		if fd_docstring != "" {
+			os.write_string(file, fmt.tprintf("/* %s */\n", fd_docstring))
+		}
+
+		os.write_string(file, fmt.tprintf("%s :: struct {{}\n", fd_name))
+	}
+}
+
+generate_procs :: proc(value: json.Array, file: ^os.File) {
+	os.write_string(file, `
+/*
+	--------------------
+	 PROCEDURES
+	--------------------
+*/
+
+foreign import lvgl {
+`)
+
+	for p in value {
+		p := p.(json.Object)
+		p_name := p["name"].(json.String)
+		p_docstring := p["docstring"].(json.String)
+
+		if p_docstring != "" {
+			os.write_string(file, fmt.tprintf("\t/* %s */\n", p_docstring))
+		}
+
+		// TODO:
+		os.write_string(file, fmt.tprintf("\t%s :: proc() ---\n", p_name))
+	}
+
+	os.write_string(file, "}")
+}
+
 main :: proc() {
 	data, err := os.read_entire_file_from_path("lvgl_api.json", context.temp_allocator)
 	if err != nil {
@@ -478,7 +506,9 @@ foreign import lvgl {
 
 	generate_enums(value.(json.Object)["enums"].(json.Array), file)
 	generate_proc_pointers(value.(json.Object)["function_pointers"].(json.Array), file)
+	generate_forward_decls(value.(json.Object)["forward_decls"].(json.Array), file)
+	generate_typedefs(value.(json.Object)["typedefs"].(json.Array), file)
 	generate_structs(value.(json.Object)["structures"].(json.Array), file)
 	generate_unions(value.(json.Object)["unions"].(json.Array), file)
-	// generate_procs(api, file)
+	generate_procs(value.(json.Object)["functions"].(json.Array), file)
 }
