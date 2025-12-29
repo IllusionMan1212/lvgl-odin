@@ -145,6 +145,9 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 				arg_name = fmt.tprintf("arg%v", i)
 			case json.String:
 				arg_name = v
+				if arg_name == "context" {
+					arg_name = "ctx"
+				}
 			}
 
 			a_docstring := a["docstring"].(json.String)
@@ -437,7 +440,7 @@ generate_procs :: proc(value: json.Array, file: ^os.File) {
 	--------------------
 */
 
-foreign import lvgl {
+foreign lvgl {
 `)
 
 	for p in value {
