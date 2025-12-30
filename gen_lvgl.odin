@@ -12,10 +12,17 @@ LVGL_VERSION :: "9.5"
 // TODO: Improvements
 /*
 	Needed to just have the thing compile
-	- ^void -> rawptr
-	- -> void -> nothing
-	- void arguments -> nothing
-	- any argument named `context` needs to be `_context` or `ctx`
+	- [x] ^void -> rawptr
+	- [x] -> void -> nothing
+	- [x] void arguments -> nothing
+	- [x] any argument named `context` needs to be `_context` or `ctx`
+	- [ ] private forward decls? gltf stuff + some lv structs
+		- the lv_image_dsc_t struct is just not found in the json file, even tho its defined in the header
+		  we only get its typedef.
+		  idk
+	- [x] duplicate procs. resolve by skipping and printing warning when gen'ing
+	- [ ] usage of enum members as array dimensions. not sure how to solve this.
+		 can hardcode the only place this is used but I don't like hardcoding stuff.
 
 	Nice to haves
 	- ^u8 -> cstring
@@ -28,7 +35,7 @@ LVGL_VERSION :: "9.5"
 	- Variables ??
 */
 
-get_primitive_type :: proc(type_name: string) -> string {
+get_primitive_type :: proc(type_name: string, options: ResolveOptions = {}) -> string {
 	switch type_name {
 	case "char":
 		return "u8"
@@ -39,6 +46,10 @@ get_primitive_type :: proc(type_name: string) -> string {
 	case "float":
 		return "f32"
 	case "void":
+		if .PointerType not_in options && (.FunctionArgument in options || .ReturnType in options) {
+			return ""
+		}
+
 		return "void"
 	case "struct":
 		return ""
@@ -47,7 +58,15 @@ get_primitive_type :: proc(type_name: string) -> string {
 	}
 }
 
-resolve_type :: proc(type: json.Object, nest_level: int) -> string {
+ResolveOption :: enum {
+	FunctionArgument,
+	ReturnType,
+	PointerType,
+}
+
+ResolveOptions :: bit_set[ResolveOption]
+
+resolve_type :: proc(type: json.Object, nest_level: int, options: ResolveOptions = {}) -> string {
 	tabs := strings.repeat("\t", nest_level)
 
 	sb := strings.builder_make_len_cap(0, 8)
@@ -57,7 +76,7 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 	switch json_type {
 	case "primitive_type":
 		name := type["name"].(json.String)
-		strings.write_string(&sb, get_primitive_type(name))
+		strings.write_string(&sb, get_primitive_type(name, options))
 	case "stdlib_type":
 		name := type["name"].(json.String)
 		strings.write_string(&sb, get_stdlib_type(name))
@@ -84,8 +103,14 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 		strings.write_string(&sb, fmt.tprintf("%s}", tabs))
 	case "pointer":
 		nested_type := type["type"].(json.Object)
+		resolved_type := resolve_type(nested_type, nest_level + 1, options + {.PointerType})
 
-		strings.write_string(&sb, fmt.tprintf("^%s", resolve_type(nested_type, nest_level + 1)))
+		if resolved_type == "void" {
+			strings.write_string(&sb, "rawptr")
+		} else {
+			strings.write_string(&sb, fmt.tprintf("^%s", resolved_type))
+		}
+
 	case "union":
 		nested_type := type["type"].(json.Object)
 
@@ -131,12 +156,15 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 
 			a_docstring := a["docstring"].(json.String)
 			a_type := a["type"].(json.Object)
+			arg_type := resolve_type(a_type, nest_level + 1, options + {.FunctionArgument})
 
 			if a_docstring != "" {
 				strings.write_string(&sb, fmt.tprintf("/* %s */", a_docstring))
 			}
 
-			strings.write_string(&sb, fmt.tprintf("%s: %s", arg_name, resolve_type(a_type, nest_level + 1)))
+			if arg_type != "" {
+				strings.write_string(&sb, fmt.tprintf("%s: %s", arg_name, arg_type))
+			}
 
 			i += 1
 		}
@@ -145,7 +173,7 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 		strings.write_string(&sb, fmt.tprintf("%s", resolve_type(fp_type, nest_level + 1)))
 	case "ret_type":
 		nested_type := type["type"].(json.Object)
-		ret_type := resolve_type(nested_type, nest_level + 1)
+		ret_type := resolve_type(nested_type, nest_level + 1, options + {.ReturnType})
 
 		if ret_type != "" {
 			strings.write_string(&sb, fmt.tprintf(" -> %s", ret_type))
@@ -163,7 +191,22 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 
 			strings.write_string(&sb, fmt.tprintf("[%s]%s", dim, resolve_type(nested_type, nest_level + 1)))
 		case json.String:
-			strings.write_string(&sb, fmt.tprintf("[%s]%s", dim, name))
+			// NOTE: array types don't have a nested type when a name is present.
+			// The name could be a primitive type or a custom type.
+			switch n {
+			case "char":
+				strings.write_string(&sb, fmt.tprintf("[%s]u8", dim))
+			case "short":
+				strings.write_string(&sb, fmt.tprintf("[%s]i16", dim))
+			case "int":
+				strings.write_string(&sb, fmt.tprintf("[%s]i32", dim))
+			case "float":
+				strings.write_string(&sb, fmt.tprintf("[%s]f32", dim))
+			case "double":
+				strings.write_string(&sb, fmt.tprintf("[%s]f64", dim))
+			case:
+				strings.write_string(&sb, fmt.tprintf("[%s]%s", dim, n))
+			}
 		case:
 			fmt.panicf("unhandled array name type: %s", n)
 		}
@@ -366,6 +409,8 @@ generate_proc_pointers :: proc(value: json.Array, file: ^os.File) {
 }
 
 generate_typedefs :: proc(value: json.Array, file: ^os.File) {
+	commented_out_typedefs := [?]string{"lv_gltf_environment_t", "lv_gltf_ibl_sampler_t"}
+
 	os.write_string(file,`
 /*
 	-------------------
@@ -382,6 +427,12 @@ generate_typedefs :: proc(value: json.Array, file: ^os.File) {
 
 		if t_docstring != "" {
 			os.write_string(file, fmt.tprintf("/* %s */\n", t_docstring))
+		}
+
+		for ct in commented_out_typedefs {
+			if t_name == ct {
+				os.write_string(file, "// ")
+			}
 		}
 
 		os.write_string(file, fmt.tprintf("%s :: distinct %s\n", t_name, resolve_type(t, 0)))
@@ -413,6 +464,8 @@ generate_forward_decls :: proc(value: json.Array, file: ^os.File) {
 }
 
 generate_procs :: proc(value: json.Array, file: ^os.File) {
+	seen_procs := make(map[string]struct{})
+
 	os.write_string(file, `
 /*
 	--------------------
@@ -428,9 +481,16 @@ foreign lvgl {
 		p_name := p["name"].(json.String)
 		p_docstring := p["docstring"].(json.String)
 
+		if _, seen := seen_procs[p_name]; seen {
+			fmt.printfln("WARN: procedure \"%s\" was already seen before. Skipping", p_name)
+			continue
+		}
+
 		if p_docstring != "" {
 			os.write_string(file, fmt.tprintf("\t/* %s */\n", p_docstring))
 		}
+
+		seen_procs[p_name] = {}
 
 		// TODO: args. and return type
 		os.write_string(file, fmt.tprintf("\t%s :: proc() ---\n", p_name))
