@@ -60,28 +60,7 @@ resolve_type :: proc(type: json.Object, nest_level: int) -> string {
 		strings.write_string(&sb, get_primitive_type(name))
 	case "stdlib_type":
 		name := type["name"].(json.String)
-		switch name {
-		case "int8_t":
-			strings.write_string(&sb, "i8")
-		case "uint8_t":
-			strings.write_string(&sb, "u8")
-		case "int16_t":
-			strings.write_string(&sb, "i16")
-		case "uint16_t":
-			strings.write_string(&sb, "u16")
-		case "int32_t":
-			strings.write_string(&sb, "i32")
-		case "uint32_t":
-			strings.write_string(&sb, "u32")
-		case "intptr_t":
-			strings.write_string(&sb, "int")
-		case "uintptr_t":
-			strings.write_string(&sb, "uintptr")
-		case "size_t":
-			strings.write_string(&sb, "uint")
-		case:
-			fmt.panicf("unknown stdlib type: %v", name)
-		}
+		strings.write_string(&sb, get_stdlib_type(name))
 	case "lvgl_type":
 		name := type["name"].(json.String)
 		strings.write_string(&sb, name)
@@ -263,6 +242,8 @@ get_stdlib_type :: proc(type: string) -> string {
 		return "i32"
 	case "uint32_t":
 		return "u32"
+	case "intptr_t":
+		return "int"
 	case "uintptr_t":
 		return "uintptr"
 	case "size_t":
@@ -325,7 +306,6 @@ generate_field :: proc(file: ^os.File, field: json.Value, nest_level: int) {
 
 	#partial switch b in f_bitsize {
 	case json.Null:
-		// TODO:
 		os.write_string(file, fmt.tprintf("%s%s: %s,\n", tabs, f_name, resolve_type(f_type, 0)))
 	case json.String:
 		fmt.panicf("Unhandled bitfield")
@@ -452,7 +432,7 @@ foreign lvgl {
 			os.write_string(file, fmt.tprintf("\t/* %s */\n", p_docstring))
 		}
 
-		// TODO:
+		// TODO: args. and return type
 		os.write_string(file, fmt.tprintf("\t%s :: proc() ---\n", p_name))
 	}
 
@@ -514,4 +494,6 @@ foreign import lvgl {
 	generate_structs(value.(json.Object)["structures"].(json.Array), file)
 	generate_unions(value.(json.Object)["unions"].(json.Array), file)
 	generate_procs(value.(json.Object)["functions"].(json.Array), file)
+
+	fmt.println("Successfully generated bindings")
 }
