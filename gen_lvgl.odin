@@ -194,11 +194,11 @@ resolve_type :: proc(type: json.Object, nest_level: int, options: ResolveOptions
 			// NOTE: array types don't have a nested type when a name is present.
 			// The name could be a primitive type or a custom type.
 			switch n {
-			case "char":
+			case "char", "uint8_t":
 				strings.write_string(&sb, fmt.tprintf("[%s]u8", dim))
 			case "short":
 				strings.write_string(&sb, fmt.tprintf("[%s]i16", dim))
-			case "int":
+			case "int", "int32_t":
 				strings.write_string(&sb, fmt.tprintf("[%s]i32", dim))
 			case "float":
 				strings.write_string(&sb, fmt.tprintf("[%s]f32", dim))
@@ -220,6 +220,15 @@ resolve_type :: proc(type: json.Object, nest_level: int, options: ResolveOptions
 		type := type["type"].(json.Object)
 
 		strings.write_string(&sb, fmt.tprintf("%s", resolve_type(type, nest_level + 1)))
+	case "special_type":
+		name := type["name"].(json.String)
+
+		switch name {
+		case "ellipsis":
+			strings.write_string(&sb, "..any")
+		case:
+			fmt.panicf("unhandled special type: %s", name)
+		}
 	case:
 		fmt.panicf("unhandled json_type: %v", json_type)
 	}
@@ -285,6 +294,10 @@ get_stdlib_type :: proc(type: string) -> string {
 		return "i32"
 	case "uint32_t":
 		return "u32"
+	case "int64_t":
+		return "i64"
+	case "uint64_t":
+		return "u64"
 	case "intptr_t":
 		return "int"
 	case "uintptr_t":
@@ -293,6 +306,8 @@ get_stdlib_type :: proc(type: string) -> string {
 		return "uint"
 	case "ssize_t":
 		return "int"
+	case "va_list":
+		return "c.va_list"
 	case:
 		fmt.panicf("unknown stdlib type: %v", type)
 	}
@@ -480,6 +495,8 @@ foreign lvgl {
 		p := p.(json.Object)
 		p_name := p["name"].(json.String)
 		p_docstring := p["docstring"].(json.String)
+		p_args := p["args"].(json.Array)
+		p_type := p["type"].(json.Object)
 
 		if _, seen := seen_procs[p_name]; seen {
 			fmt.printfln("WARN: procedure \"%s\" was already seen before. Skipping", p_name)
@@ -492,8 +509,62 @@ foreign lvgl {
 
 		seen_procs[p_name] = {}
 
-		// TODO: args. and return type
-		os.write_string(file, fmt.tprintf("\t%s :: proc() ---\n", p_name))
+		os.write_string(file, fmt.tprintf("\t%s :: proc(", p_name))
+
+		i := 0
+		for arg in p_args {
+			if i != 0 {
+				os.write_string(file, ", ")
+			}
+
+			a := arg.(json.Object)
+			a_name := a["name"]
+
+			arg_name := ""
+			#partial switch v in a_name {
+			case json.Null:
+				arg_name = fmt.tprintf("arg%v", i)
+			case json.String:
+				arg_name = v
+				if arg_name == "context" {
+					arg_name = "ctx"
+				}
+				if arg_name == "matrix" {
+					arg_name = "mtx"
+				}
+				if arg_name == "map" {
+					arg_name = "map_"
+				}
+				if arg_name == "..." {
+					arg_name = "args"
+				}
+			}
+
+			a_docstring := a["docstring"].(json.String)
+			a_type := a["type"].(json.Object)
+			arg_type := resolve_type(a_type, 0, {.FunctionArgument})
+
+			if a_docstring != "" {
+				os.write_string(file, fmt.tprintf("/* %s */", a_docstring))
+			}
+
+			if arg_type != "" {
+				if arg_type == "..any" {
+					os.write_string(file, fmt.tprintf("#c_vararg %s: %s", arg_name, arg_type))
+				} else {
+					os.write_string(file, fmt.tprintf("%s: %s", arg_name, arg_type))
+				}
+			}
+
+			i += 1
+		}
+
+		os.write_string(file, ")")
+		resolved_type := resolve_type(p_type, 0, {.ReturnType})
+		if resolved_type != "" {
+			os.write_string(file, fmt.tprintf("%s", resolved_type))
+		}
+		os.write_string(file, " ---\n")
 	}
 
 	os.write_string(file, "}")
@@ -527,6 +598,8 @@ main :: proc() {
 
 	os.write_string(file, `
 package lvgl
+
+import "core:c"
 
 when ODIN_OS == .Linux {
 foreign import lvgl {
