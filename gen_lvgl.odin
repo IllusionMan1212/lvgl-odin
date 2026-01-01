@@ -571,16 +571,15 @@ foreign lvgl {
 }
 
 main :: proc() {
-	data, err := os.read_entire_file_from_path("lvgl_api.json", context.temp_allocator)
+	if len(os.args) < 2 {
+		fmt.println("Please provide a path to the api json file")
+		return
+	}
+
+	data, err := os.read_entire_file_from_path(os.args[1], context.temp_allocator)
 	if err != nil {
 		fmt.panicf("Error reading api file: %v", err)
 	}
-
-	// api: API
-	// unmarshal_err := json.unmarshal(data, &api)
-	// if unmarshal_err != nil {
-	// 	fmt.panicf("Error while unmarshalling: %v", unmarshal_err)
-	// }
 
 	file, open_err := os.open("lvgl.odin", {.Write, .Create, .Trunc})
 	if open_err != nil {
